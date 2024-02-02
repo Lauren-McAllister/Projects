@@ -27,6 +27,8 @@ library(ggrepel)
 library(qtl)
 #install.packages("emmeans")
 library(emmeans)
+library(phangorn)
+library(ape)
 ```
 
 ***************************************Lines 32 - 184 are for whole-genome ANOVA***************************************
@@ -302,7 +304,7 @@ lod_matrix <- with(out.hk3, tapply(lod, list(pos, chr), mean, na.rm = TRUE))
 #lod_score <- out.hk3[out.hk3$chr == 2 & out.hk3$pos == 40.005 & rownames(out.hk3) == "chr2_9866543_9907542_122", "lod"]
 ```
 
-***************************************Lines 367 - 471 are for Filtering Data and Testing 16% Filter**********************************
+***************************************Lines 307 - 471 are for Filtering Data and Testing 16% Filter**********************************
 #Filtering the data to remove markers with >=X% of NA as genotype
 ```{r}
 filter_30 <- colnames(merged_data_final)[colSums(is.na(merged_data_final)) > (98*0.30)]
@@ -469,7 +471,22 @@ lodint(out.hk5, chr = 6)
 bayesint(out.hk5, chr=6)
 ```
 
-*************************************Lines 472 - 533 are for Effect Direction*************************************
+*************************************Lines 474 - 489 are for Building Gene Tree*************************************
+```{r}
+#Building the gene tree
+AA_sequences <- read.phyDat("Nov_15 Alignment2.fasta", format = "fasta", type = "AA")
+dm <- dist.ml(AA_sequences)
+treeUPGMA <- upgma(dm)
+treeNJ <- NJ(dm)
+plot(treeUPGMA, main = "UPGMA")
+
+#Bootstrapping
+fun <- function(x) upgma(dist.ml(x))
+bs_upgma <- bootstrap.phyDat(AA_sequences, fun)
+plotBS(treeUPGMA, bs_upgma, main = "UPGMA")
+```
+
+*************************************Lines 489 - 550 are for Effect Direction*************************************
 #Using rqtl effectplot and effectscan to look at effect size
 ```{r}
 #Finding the markers from QTL interval
