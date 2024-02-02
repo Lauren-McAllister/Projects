@@ -1,0 +1,533 @@
+---
+title: "Thesis - Clean Draft"
+output: html_document
+date: "2023-05-30"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Data Sets
+```{r}
+genotype_data <- read.csv("ParCard_RILs_PubDataset_.csv",header=T)
+phenotype_data <- read.csv("Copy of RIL Metrics Master List - Sheet1.csv") #Metrics List with C
+genotype_data_otherinfo <- read.csv("Locus Data.csv") #Other Data for each marker without Genotypes
+```
+
+#Packages
+```{r}
+library(dplyr)
+library(ggplot2)
+#install.packages("scales")
+library(scales)
+#install.packages("ggrepel")
+library(ggrepel)
+#install.packages("qtl")
+library(qtl)
+#install.packages("emmeans")
+library(emmeans)
+```
+
+***************************************Lines 32 - 184 are for whole-genome ANOVA***************************************
+#Merging genotype_data and phenotype_data
+```{r}
+#Transforming genotype_data and removing other data such as Ig, cM
+gd_transformed <- data.frame(t(genotype_data[-1]))
+colnames(gd_transformed) <- genotype_data[,1]
+gd_transformed_subset <- gd_transformed[-(1:6),]
+
+#Adding RIL names to a column of transformed, subsetted genotype_data
+gd_transformed_subset$RILs <- rownames(gd_transformed_subset)
+
+#Merging phenotype_data with transformed, subsetted genotype_data
+merged_data <- merge(gd_transformed_subset, phenotype_data, by.x="RILs", by.y="RIL")
+
+#Making merged_data where empty strings are replaced by NA
+merged_data_final <- merged_data
+merged_data_final[merged_data_final == ""] <- NA
+```
+
+#ANOVA on the first row of merged_data_final
+```{r}
+ANOVA_onerow <- lm(C ~ chr1_156732_173000_2, data=merged_data_final)
+anova(ANOVA_onerow)
+```
+
+#ANOVA across the genome
+```{r}
+#There are 2,535 markers and two markers were removed. The deleted markers are "chr6_13103816_13233393_147" and "chr6_14086643_14096416_155"
+
+mdf_subset = subset(merged_data_final, select = -c(chr6_13103816_13233393_147, chr6_14086643_14096416_155))
+
+P_value <- NULL
+F_value <- NULL
+df <- NULL
+Sum_Sq <- NULL
+Mean_Sq <- NULL
+
+for(i in 2:2534){
+  mdf_subset_lm <- lm(mdf_subset$C ~ mdf_subset[,i])
+ 
+  Marker <- c(colnames(mdf_subset[2:2534]))
+  
+  P_value_results <- anova(mdf_subset_lm)$"Pr(>F)"[1]
+  P_value <- c(P_value, P_value_results)
+  
+  F_value_results <- anova(mdf_subset_lm)$"F value"[1]
+  F_value <- c(F_value, F_value_results)
+  
+  df_results <- anova(mdf_subset_lm)$"Df"[1]
+  df <- c(df, df_results)
+  
+  Sum_Sq_results <- anova(mdf_subset_lm)$"Sum Sq"[1]
+  Sum_Sq <- c(Sum_Sq, Sum_Sq_results) 
+  
+  Mean_Sq_results <- anova(mdf_subset_lm)$"Mean Sq"[1]
+  Mean_Sq <- c(Mean_Sq, Mean_Sq_results)
+  
+  Neg_log_P <- -log(P_value, base=10)
+}
+```
+
+#Merging whole-genome ANOVA results and other marker data (ex: Ig, cM)
+```{r}
+ANOVA_results <- data.frame(Marker, P_value, Neg_log_P, F_value, df, Sum_Sq, Mean_Sq)
+aov_and_otherdata <- merge(ANOVA_results, genotype_data_otherinfo, by.x="Marker", by.y="Marker")
+```
+
+#ggplot of whole-genome ANOVA results with Chromosome Separation
+```{r}
+ggplot(aov_and_otherdata, aes(x=min_bp, y=Neg_log_P, color=Chr))+geom_point(size=0.5, show.legend=FALSE)+xlab("Chromosome")+ylab("-log10(pvalue)")+theme_classic()+facet_wrap(~ Chr, ncol = 8, strip.position="bottom")+ theme(axis.ticks.x = element_blank(), axis.text.x=element_blank(), panel.spacing.x=unit(0,"lines"))+scale_color_manual(values=c("#F8766D", "#7CAE00", "#CD9600", "#00BFC4", "#C77CFF", "#00BE67", "#FF61CC", "#00A9FF"))
+
+```
+
+#Making individual dataframes for each Chromosome that contains MIXTA genes
+```{r}
+chr2_results <- data.frame(filter(aov_and_otherdata, Chr == "chr2"))
+chr3_results <- data.frame(filter(aov_and_otherdata, Chr == "chr3"))
+chr4_results <- data.frame(filter(aov_and_otherdata, Chr == "chr4"))
+chr6_results <- data.frame(filter(aov_and_otherdata, Chr == "chr6"))
+chr8_results <- data.frame(filter(aov_and_otherdata, Chr == "chr8"))
+```
+
+#ggplot of ANOVA results in Chromosome 2 w/MIXTA markers labelled
+```{r}
+#M. cardinalis has a MIXTA in "chr2_11839663_11899364_146" and M. parishii has a MIXTA in "chr2_9866543_9907542_122"
+options(scipen=999)
+ggplot(chr2_results, aes(x=min_bp, y=Neg_log_P, label=Marker))+
+  geom_point(color=dplyr::case_when(chr2_results$min_bp == 11839663 ~ "red",chr2_results$min_bp == 9866543 ~ "red", chr2_results$min_bp != 11839663 ~ "grey70"), size=0.5)+
+  xlab("Min BP #")+ylab("-log10(pvalue)")+
+  theme_classic()+
+  scale_x_continuous(labels=scales::comma)+
+  geom_label_repel(data=subset(chr2_results, Marker == "chr2_9866543_9907542_122"), box.padding=6, point.padding=0.5, segment.color = 'grey50')+
+  geom_label_repel(data=subset(chr2_results, Marker == "chr2_11839663_11899364_146"), box.padding=4, point.padding=0.5, segment.color = 'grey50')+
+  ggtitle("Chromosome 2")+theme(plot.title = element_text(hjust = 0.5))
+```
+
+#ggplot of ANOVA results in Chromosome 3 w/MIXTA markers labelled
+```{r}
+#M. cardinalis has a MIXTA in "chr3_48503811_48554628_275" and M. parishii has a MIXTA in "chr3_45431224_45467439_234"
+options(scipen=999)
+ggplot(chr3_results, aes(x=min_bp, y=Neg_log_P, label=Marker))+
+  geom_point(color=dplyr::case_when(chr3_results$min_bp == 48503811 ~ "red",chr3_results$min_bp == 45431224 ~ "red", chr3_results$min_bp != 48503811 ~ "grey70"), size=0.5)+
+  xlab("Min BP #")+ylab("-log10(pvalue)")+
+  theme_classic()+
+  scale_x_continuous(labels=scales::comma)+
+  geom_label_repel(data=subset(chr3_results, Marker == "chr3_48503811_48554628_275"), box.padding=1.5, point.padding=0.5, segment.color = 'grey50')+
+  geom_label_repel(data=subset(chr3_results, Marker == "chr3_45431224_45467439_234"), box.padding=3, point.padding=0.5, segment.color = 'grey50')+
+  ggtitle("Chromosome 3")+theme(plot.title = element_text(hjust = 0.5))
+```
+
+#ggplot of ANOVA results in Chromosome 4 w/MIXTA markers labelled
+```{r}
+#M. cardinalis and M. parishii both have a MIXTA in "chr4_1573652_1651913_15"
+options(scipen=999)
+ggplot(chr4_results, aes(x=min_bp, y=Neg_log_P, label=Marker))+
+  geom_point(color=dplyr::case_when(chr4_results$min_bp == 1573652 ~ "red",chr4_results$min_bp == 1573652 ~ "red", chr4_results$min_bp != 1573652 ~ "grey70"), size=0.5)+
+  xlab("Min BP #")+ylab("-log10(pvalue)")+
+  theme_classic()+
+  scale_x_continuous(labels=scales::comma)+
+  geom_label_repel(data=subset(chr4_results, Marker == "chr4_1573652_1651913_15"), box.padding=6, point.padding=0.5, segment.color = 'grey50')+
+  ggtitle("Chromosome 4")+theme(plot.title = element_text(hjust = 0.5))
+```
+
+#ggplot of ANOVA results in Chromosome 6 w/MIXTA markers labelled
+```{r}
+#M. cardinalis has three MIXTAs in "chr6_1093161_1147429_25" and M. parishii has three MIXTAs in "chr6_1183639_1336806_27"
+options(scipen=999)
+ggplot(chr6_results, aes(x=min_bp, y=Neg_log_P, label=Marker))+
+  geom_point(color=dplyr::case_when(chr6_results$min_bp == 1093161 ~ "red",chr6_results$min_bp == 1183639 ~ "red", chr6_results$min_bp != 1093161 ~ "#00BE67"), size=0.5)+
+  xlab("Min BP #")+ylab("-log10(pvalue)")+
+  theme_classic()+
+  scale_x_continuous(labels=scales::comma)+
+  geom_label_repel(data=subset(chr6_results, Marker == "chr6_1093161_1147429_25"), box.padding=1.5, point.padding=0.5, segment.color = "#00BE67")+
+  geom_label_repel(data=subset(chr6_results, Marker == "chr6_1183639_1336806_27"), box.padding=1.5, point.padding=0.5, segment.color = "#00BE67")+
+  #ggtitle("Chromosome 6")+theme(plot.title = element_text(hjust = 0.5)+
+  #geom_label_repel(data=subset(chr6_results, Marker == "chr6_1154329_1183635_26"), box.padding=1.5, point.padding=0.5, segment.color = 'grey50')
+  ggtitle("Chromosome 6")+theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+#ggplot of ANOVA results in Chromosome 8 w/MIXTA markers labelled
+```{r}
+#M. cardinalis and M. parishii both have a MIXTA in "chr8_419452_496444_10"
+options(scipen=999)
+ggplot(chr8_results, aes(x=min_bp, y=Neg_log_P, label=Marker))+
+  geom_point(color=dplyr::case_when(chr8_results$min_bp == 419452 ~ "red",chr8_results$min_bp == 419452 ~ "red", chr8_results$min_bp != 419452 ~ "grey70"), size=0.5)+
+  xlab("Min BP #")+ylab("-log10(pvalue)")+
+  theme_classic()+
+  scale_x_continuous(labels=scales::comma)+
+  geom_label_repel(data=subset(chr8_results, Marker == "chr8_419452_496444_10"), box.padding=6, point.padding=0.5, segment.color = 'grey50')+
+  ggtitle("Chromosome 8")+theme(plot.title = element_text(hjust = 0.5))
+```
+
+****************************************Lines 185 - 304 are for QTL Mapping****************************************
+#Turning genotype and phenotype data into Formatted .csv for qtl
+```{r}
+#Transforming the genotype_data again, but with other information (ex: Ig, cM) included
+genotype_datatransformed <- data.frame(t(df1[-1]))
+colnames(genotype_datatransformed) <- df1[,1]
+gd_transformed_subset2 <- genotype_datatransformed[-(3:6),]
+
+#Adding a column with RILs to transformed, subsetted genotype_data
+gd_transformed_subset2$RIL <- rownames(ParCard.3)
+
+#Adding phenotype_data to transformed, subsetted genotype_data
+merged_data_final2 <- full_join(gd_transformed_subset2, phenotype_data, by= "RIL")
+
+#Bringing C values to the Front and Removing other columns
+mdf2_Cfront <- merged_data_final2 %>% relocate(C)
+mdf2c_subset <- mdf2_Cfront[,-(2537:2544)]
+
+#Changing notation of phenotypes
+mdf2cs_notation <- mdf2c_subset
+mdf2cs_notation[mdf2cs_notation == ""] <- "-"
+mdf2cs_notation[mdf2cs_notation == "AA"] <- "A"
+mdf2cs_notation[mdf2cs_notation == "BB"] <- "B"
+
+#Deleting RIL rows that didn't match between both data frames
+qtl_fcsv <- mdf2cs_notation[-c(5, 6, 10, 13, 17:20, 22, 23, 28, 31, 33, 37, 40, 46, 50, 51, 56, 59, 65, 66, 69, 72, 73, 78, 81, 83, 89, 90, 93, 96, 106, 110, 112, 114, 115, 120, 123, 124, 125, 127, 128, 130, 133, 144, 147:161),]
+
+#Exporting to .csv
+#write.csv(qtl_fcsv, file='/Users/laurenmcallister/Desktop/Thesis/RIL.dataFinalcsv.csv', row.names = FALSE)
+```
+
+#QTL Map Using F2 Method (includes heterozygotes)
+```{r}
+F2qtl_cross  <- read.cross("csv", ".", "RIL.dataFinalcsv_noNA.csv", genotypes = c("A","H", "B"), alleles=c("A","B"))
+
+summary(F2qtl_cross)
+plot(F2qtl_cross)
+
+#Single QTL Genome Scan
+F2qtl_cross <- calc.genoprob(F2qtl_cross, step =1)
+out.em1 <- scanone(F2qtl_cross)
+plot(out.em1, ylim = c(0, 4.5))
+  #Adding a line for threshold lod from permutations
+  F2_threshhold <- summary(operm1, alpha = c(0.05))
+  F2_threshhold2 <- F2_threshhold[1]
+  abline(h = F2_threshhold2, col = "red", lty = 2)
+
+#Haley-Knott Rregression
+out.hk1 <- scanone(F2qtl_cross, method = "hk")
+plot(out.em1, col = "blue")
+plot(out.hk1, col = "red", add = TRUE)
+plot(out.hk1 - out.em1, ylim = c(-0.3, 0.3), ylab = "LOD (HK) - LOD (EM)")
+
+#Multiple Imputation
+F2qtl_cross <- sim.geno(F2qtl_cross, step = 1, n.draws = 64)
+out.imp1 <-scanone(F2qtl_cross, method = "imp")
+plot(out.em1, out.hk1, out.imp1, col = c("blue", "red","green"))
+plot(out.em1, out.hk1, out.imp1, col = c("blue", "red","green"), chr=c(3,5,6,8))
+
+#Permutations
+operm1 <- scanone(F2qtl_cross, method = "hk", n.perm =1000)
+plot(operm1)
+summary(operm1)
+summary(operm1, alpha = c(0.05, 0.2))
+summary(out.hk1, perms=operm1, alpha = 0.2, pvalue = TRUE)
+
+#Intervals
+lodint(out.hk1, chr = 6)
+bayesint(out.hk1, chr=6)
+```
+
+#QTL Map Using RIL Method (excludes heterozygotes)
+```{r}
+RILqtl_cross  <- read.cross("csv", ".", "RIL.dataFinalcsv_noNA.csv", genotypes = c("A","H", "B"), alleles=c("A","B"))
+RILqtl_cross <- convert2riself(RILqtl_cross)
+
+summary(RILqtl_cross)
+plot(RILqtl_cross)
+
+#Single QTL Genome Scan
+RILqtl_cross <- calc.genoprob(RILqtl_cross, step =1)
+out.em3 <- scanone(RILqtl_cross)
+plot(out.em3)
+  #Adding a line for threshold lod from permutations
+  RIL_threshhold <- summary(operm3, alpha = c(0.05))
+  RIL_threshhold2 <- RIL_threshhold[1]
+  abline(h = RIL_threshhold2, col = "red", lty = 2)
+
+#Haley-Knott Rregression
+out.hk3 <- scanone(RILqtl_cross, method = "hk")
+plot(out.em3, col = "blue")
+plot(out.hk3, col = "red", add = TRUE)
+plot(out.hk3 - out.em3, ylim = c(-0.3, 0.3), ylab = "LOD (HK) - LOD (EM)")
+
+#Multiple Imputation
+RILqtl_cross <- sim.geno(RILqtl_cross, step = 1, n.draws = 64)
+out.imp3 <-scanone(RILqtl_cross, method = "imp")
+plot(out.em3, out.hk3, out.imp3, col = c("blue", "red","green"))
+plot(out.em3, out.hk3, out.imp3, col = c("blue", "red","green"), chr=c(3,5,6,8))
+
+#Permutations
+operm3 <- scanone(RILqtl_cross, method = "hk", n.perm =1000)
+plot(operm3)
+summary(operm3)
+summary(operm3, alpha = c(0.05, 0.2))
+summary(out.hk3, perms=operm3, alpha = 0.2, pvalue = TRUE)
+
+lodint(out.hk3, chr = 6)
+bayesint(out.hk3, chr=6)
+
+
+lod_matrix <- with(out.hk3, tapply(lod, list(pos, chr), mean, na.rm = TRUE))
+
+
+#To search through QTL data
+#marker_name <- find.marker(RILqtl_cross, 6, 16.554)
+#marker_pos <- find.markerpos(RILqtl_cross, "chr2_9866543_9907542_122")
+#lod_score <- out.hk3[out.hk3$chr == 2 & out.hk3$pos == 40.005 & rownames(out.hk3) == "chr2_9866543_9907542_122", "lod"]
+```
+
+***************************************Lines 367 - 471 are for Filtering Data and Testing 16% Filter**********************************
+#Filtering the data to remove markers with >=X% of NA as genotype
+```{r}
+filter_30 <- colnames(merged_data_final)[colSums(is.na(merged_data_final)) > (98*0.30)]
+filter_30f <- merged_data_final[, !(colnames(merged_data_final) %in% filter_30)]
+
+filter_25 <- colnames(merged_data_final)[colSums(is.na(merged_data_final)) > (98*0.25)]
+filter_25f <- merged_data_final[, !(colnames(merged_data_final) %in% filter_25)]
+
+filter_20 <- colnames(merged_data_final)[colSums(is.na(merged_data_final)) > (98*0.20)]
+filter_20f <- merged_data_final[, !(colnames(merged_data_final) %in% filter_20)]
+
+filter_16 <- colnames(merged_data_final)[colSums(is.na(merged_data_final)) > (98*0.16)]
+filter_16f <- merged_data_final[, !(colnames(merged_data_final) %in% filter_16)]
+
+filter_15 <- colnames(merged_data_final)[colSums(is.na(merged_data_final)) > (98*0.15)]
+filter_15f <- merged_data_final[, !(colnames(merged_data_final) %in% filter_15)]
+
+#Removing data with >=30% NA genotypes leaves 2361 markers remaining.
+#Removing data with >=25% NA genotypes leaves 2066 markers remaining.
+#Removing data with >=20% NA genotypes leaves 1293 markers remaining.
+#Removing data with >=16% NA genotypes leaves 567 markers remaining.
+#Removing data with >=15% NA genotypes leaves 421 markers remaining.
+```
+
+#for Loop of ANOVA results with markers removed that have >=16% NA genotypes
+```{r}
+P_value_2 <- NULL
+F_value_2 <- NULL
+df_2 <- NULL
+Sum_Sq_2 <- NULL
+Mean_Sq_2 <- NULL
+
+for(i in 2:560){
+  filter16_lm <- lm(filter_16f$C ~ filter_16f[,i])
+ 
+  Marker_2 <- c(colnames(filter_16f[2:560]))
+  
+  P_value_results_2 <- anova(filter16_lm)$"Pr(>F)"[1]
+  P_value_2 <- c(P_value_2, P_value_results_2)
+  
+  F_value_results_2 <- anova(filter16_lm)$"F value"[1]
+  F_value_2 <- c(F_value_2, F_value_results_2)
+  
+  df_results_2 <- anova(filter16_lm)$"Df"[1]
+  df_2 <- c(df_2, df_results_2)
+  
+  Sum_Sq_results_2 <- anova(filter16_lm)$"Sum Sq"[1]
+  Sum_Sq_2 <- c(Sum_Sq_2, Sum_Sq_results_2) 
+  
+  Mean_Sq_results_2 <- anova(filter16_lm)$"Mean Sq"[1]
+  Mean_Sq_2 <- c(Mean_Sq_2, Mean_Sq_results_2)
+  
+  Neg_log_P_2 <- -log(P_value_2, base=10)
+}
+
+#If using the >=30% removal, use 2:2354 for Marker_2 line
+#If using the >=20% removal, use 2:1286 for Marker_2 line
+#If using the >=16% removal, use 2:560 for Marker_2 line
+#If using the >=15% removal, use 2:414 for Marker_2 line
+```
+
+#Adding other data (ex: Ig, cM) back into >=16% filter ANOVA results
+```{r}
+filter16_otherdata <- data.frame(Marker_2, P_value_2, Neg_log_P_2, F_value_2, df_2, Sum_Sq_2, Mean_Sq_2)
+filter16_anovaresults <- merge(filter16_otherdata, genotype_data_otherinfo, by.x="Marker_2", by.y="Marker")
+```
+
+#ggplot of whole-genome ANOVA results with Chromosome Separation - Markers with >=16% NA genotype removed
+```{r}
+ggplot(filter16_anovaresults, aes(x=min_bp, y=Neg_log_P_2, color=Chr))+geom_point(size=0.5, show.legend=FALSE)+xlab("Chromosome")+ylab("-log10(pvalue)")+theme_classic()+facet_wrap(~ Chr, ncol = 8, strip.position="bottom")+ theme(axis.ticks.x = element_blank(), axis.text.x=element_blank(), panel.spacing.x=unit(0,"lines"))+scale_color_manual(values=c("#F8766D", "#7CAE00", "#CD9600", "#00BFC4", "#C77CFF", "#00BE67", "#FF61CC", "#00A9FF"))
+
+```
+
+#Getting data ready for QTL - Markers with >=16% NA genotype removed
+```{r}
+filter_16 <- colnames(merged_data_final)[colSums(is.na(merged_data_final)) > (98*0.16)]
+filter_16f <- merged_data_final[, !(colnames(merged_data_final) %in% filter_16)]
+
+#Deleting RIL rows that didn't match between both data frames
+qtl_fcsv <- mdf2cs_notation[-c(5, 6, 10, 13, 17:20, 22, 23, 28, 31, 33, 37, 40, 46, 50, 51, 56, 59, 65, 66, 69, 72, 73, 78, 81, 83, 89, 90, 93, 96, 106, 110, 112, 114, 115, 120, 123, 124, 125, 127, 128, 130, 133, 144, 147:161),]
+qtl_fcsv16 <- qtl_fcsv[, !(colnames(qtl_fcsv) %in% filter_16)]
+
+#Exporting to .csv
+#write.csv(qtl_fcsv16, file='/Users/laurenmcallister/Desktop/Thesis/QTLdata16trim.csv', row.names = FALSE)
+```
+
+#QTL Map Using RIL Method (excludes heterozygotes) - Markers with >=16% NA genotype removed
+```{r}
+RILqtl_cross16  <- read.cross("csv", ".", "QTLdata16trimNoNA.csv", genotypes = c("A","H", "B"), alleles=c("A","B"))
+RILqtl_cross16 <- convert2riself(RILqtl_cross16)
+
+summary(RILqtl_cross16)
+plot(RILqtl_cross16)
+
+#Single QTL Genome Scan
+RILqtl_cross16 <- calc.genoprob(RILqtl_cross16, step =1)
+out.em4 <- scanone(RILqtl_cross16)
+plot(out.em4)
+  #Adding a line for threshold lod from permutations
+  RIL_16threshold <- summary(operm4, alpha = c(0.05))
+  RIL_16threshold2 <- RIL_16threshold[1]
+  abline(h = RIL_16threshold2, col = "red", lty = 2)
+
+#Haley-Knott Rregression
+out.hk4 <- scanone(RILqtl_cross16, method = "hk")
+plot(out.em4, col = "blue")
+plot(out.hk4, col = "red", add = TRUE)
+plot(out.hk4 - out.em4, ylim = c(-0.3, 0.3), ylab = "LOD (HK) - LOD (EM)")
+
+#Multiple Imputation
+RILqtl_cross16 <- sim.geno(RILqtl_cross16, step = 1, n.draws = 64)
+out.imp4 <-scanone(RILqtl_cross16, method = "imp")
+plot(out.em4, out.hk4, out.imp4, col = c("blue", "red","green"))
+plot(out.em4, out.hk4, out.imp4, col = c("blue", "red","green"), chr=c(3,5,6,8))
+
+#Permutations
+operm4 <- scanone(RILqtl_cross16, method = "hk", n.perm =1000)
+plot(operm4)
+summary(operm4)
+summary(operm4, alpha = c(0.05, 0.2))
+summary(out.hk4, perms=operm4, alpha = 0.2, pvalue = TRUE)
+
+lodint(out.hk4, chr = 6)
+bayesint(out.hk4, chr=6)
+```
+
+#QTL Map Using F2 Method (includes Heterozygotes) - Markers with >=16% NA genotype removed
+```{r}
+F2qtl_cross16  <- read.cross("csv", ".", "QTLdata16trimNoNA.csv", genotypes = c("A","H", "B"), alleles=c("A","B"))
+
+summary(F2qtl_cross16)
+plot(F2qtl_cross16)
+
+#Single QTL Genome Scan
+F2qtl_cross16 <- calc.genoprob(F2qtl_cross16, step =1)
+out.em5 <- scanone(F2qtl_cross16)
+plot(out.em5, ylim = c(0, 4.5))
+  #Adding a line for threshold lod from permutations
+  F2_16threshold <- summary(operm5, alpha = c(0.05))
+  filter_25 <- F2_16threshold[1]
+  abline(h = filter_25, col = "red", lty = 2)
+
+#Haley-Knott Rregression
+out.hk5 <- scanone(F2qtl_cross16, method = "hk")
+plot(out.em5, col = "blue")
+plot(out.hk5, col = "red", add = TRUE)
+plot(out.hk5 - out.em5, ylim = c(-0.3, 0.3), ylab = "LOD (HK) - LOD (EM)")
+
+#Multiple Imputation
+F2qtl_cross16 <- sim.geno(F2qtl_cross16, step = 1, n.draws = 64)
+out.imp5 <-scanone(F2qtl_cross16, method = "imp")
+plot(out.em5, out.hk5, out.imp5, col = c("blue", "red","green"))
+plot(out.em5, out.hk5, out.imp5, col = c("blue", "red","green"), chr=c(3,5,6,8))
+
+#Permutations
+operm5 <- scanone(F2qtl_cross16, method = "hk", n.perm =1000)
+plot(operm5)
+summary(operm5)
+summary(operm5, alpha = c(0.05, 0.2))
+summary(out.hk5, perms=operm5, alpha = 0.2, pvalue = TRUE)
+
+#Intervals
+lodint(out.hk5, chr = 6)
+bayesint(out.hk5, chr=6)
+```
+
+*************************************Lines 472 - 533 are for Effect Direction*************************************
+#Using rqtl effectplot and effectscan to look at effect size
+```{r}
+#Finding the markers from QTL interval
+mar <- find.marker(F2qtl_cross, 6, 11.036)
+find.markerpos(F2qtl_cross, "chr6_1183639_1336806_27")
+
+#Effect plot
+effectplot(F2qtl_cross, pheno.col=1, mname1="chr6_1183639_1336806_27")
+
+#Effectscan
+F2qtl_cross <- sim.geno(F2qtl_cross, step=2.5, n.draws=16)
+effectscan(F2qtl_cross, chr="6", mtick="triangle", get.se=TRUE)
+```
+
+#Making a dataframe with C and markers of interest
+```{r}
+#_24, _26, and _28 are markers next to guideless, which is in _25 and _27. 
+
+#Markers of Interest - Name
+important_marker_names <- c("chr6_999372_1093116_24", "chr6_1093161_1147429_25", "chr6_1154329_1183635_26", "chr6_1183639_1336806_27", "chr6_1336839_1357749_28") 
+
+#Markers of Interest - Position
+important_marker_positions <- c(9.312, 10.691, 11.036, 11.036)
+
+#Making the data frame
+important_markers <- data.frame(merged_data_final$C, merged_data_final$chr6_999372_1093116_24, merged_data_final$chr6_1093161_1147429_25, merged_data_final$chr6_1154329_1183635_26, merged_data_final$chr6_1183639_1336806_27, merged_data_final$chr6_1336839_1357749_28)
+```
+
+#Generating emmean and se. Used to make bar graph of C values across genotypes at markers of interest
+```{r}
+important_markers_data <- aov(important_markers$merged_data_final.C~important_markers$merged_data_final.chr6_1183639_1336806_27)
+model.tables(important_markers_data, "means", se=T)
+
+#Getting emmeans and se
+m1 <- emmeans(important_markers_data, pairwise~merged_data_final.chr6_1183639_1336806_27, type="response")
+df_emm <- data.frame(m1$emmeans)
+
+AA_emmean <- head(df_emm[1,2])
+BB_emmean <- head(df_emm[2,2])
+H_emmean <- head(df_emm[3,2])
+Car_emmean <- 0.267 #from M.cardinalis parent
+Par_emmean<- 0.568 #from M.parishii parent
+  
+AA_se <- head(df_emm[1,3])
+BB_se <- head(df_emm[2,3])
+H_se <- head(df_emm[3,3])
+Car_se <- 0.081 #from M.cardinalis parent
+Par_se <- 0.200 #from M.parishii parent
+
+#Bar graphs including parents
+including_parents <- data.frame(genotype=c("Car", "AA", "H", "BB", "Par"), emmean=c(Car_emmean, AA_emmean, H_emmean, BB_emmean, Par_emmean), se=c(Car_se, AA_se, H_se, BB_se, Par_se))
+including_parents$genotype <- factor(including_parents$genotype, levels=c("Car", "AA", "H", "BB", "Par"))
+
+ggplot(including_parents) + geom_bar(aes(x=genotype, y=emmean), stat="identity", fill=c("red", "red", "darksalmon", "grey", "grey"), alpha=0.7)+geom_errorbar(aes(x=genotype, ymin=emmean-se, ymax=emmean+se), width=0.4, colour="black", alpha=0.9, size=0.4)+theme_classic()
+
+#Bar graphs excluding parents
+excluding_parents <- data.frame(genotype=c("AA", "H", "BB"), emmean=c(AA_emmean, H_emmean, BB_emmean), se=c(AA_se, H_se, BB_se))
+excluding_parents$genotype <- factor(excluding_parents$genotype, levels=c("AA", "H", "BB"))
+
+ggplot(excluding_parents) + geom_bar(aes(x=genotype, y=emmean), stat="identity", fill=c("red", "darksalmon", "grey"), alpha=0.7)+geom_errorbar(aes(x=genotype, ymin=emmean-se, ymax=emmean+se), width=0.4, colour="black", alpha=0.9, size=0.4)+theme_classic()
+```
